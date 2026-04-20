@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI 狼人杀</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header>
+  <h1>🐺 AI 狼人杀</h1>
+  <span class="subtitle">让不同的 AI 互相博弈</span>
+</header>
+
+<!-- ===== Setup Screen ===== -->
+<div id="setup-screen" class="screen active">
+
+  <div class="card">
+    <h2>游戏配置</h2>
+    <div class="form-row">
+      <div class="form-group">
+        <label>玩家人数</label>
+        <select id="player-count">
+          <option value="5">5 人</option>
+          <option value="6" selected>6 人</option>
+          <option value="7">7 人</option>
+          <option value="8">8 人</option>
+          <option value="9">9 人</option>
+          <option value="10">10 人</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>AWS Region</label>
+        <div style="display:flex;gap:0.5rem;align-items:center">
+          <input type="text" id="aws-region" value="us-east-1" placeholder="us-east-1" style="flex:1">
+          <button id="load-bedrock-btn" class="btn-sm" title="从 AWS 获取最新可用模型列表">🔄 加载 Bedrock 模型</button>
+        </div>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group">
+        <label>AWS Access Key（可选，留空使用环境变量）</label>
+        <input type="password" id="aws-key" placeholder="AKIA…">
+      </div>
+      <div class="form-group">
+        <label>AWS Secret Key（可选）</label>
+        <input type="password" id="aws-secret" placeholder="…">
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>玩家配置</h2>
+    <table id="players-table">
+      <thead>
+        <tr>
+          <th style="width:40px">#</th>
+          <th style="width:110px">玩家名</th>
+          <th>模型</th>
+          <th style="width:200px">API Key（非 Bedrock 填写）</th>
+        </tr>
+      </thead>
+      <tbody id="players-tbody"></tbody>
+    </table>
+  </div>
+
+  <button id="start-btn" class="btn-primary">开始游戏</button>
+
+</div><!-- /setup-screen -->
+
+
+<!-- ===== Game Screen ===== -->
+<div id="game-screen" class="screen">
+
+  <div class="phase-bar">
+    <span>🎮 AI 狼人杀</span>
+    <span id="phase-info" class="phase-label">—</span>
+  </div>
+
+  <div class="game-layout">
+
+    <div class="sidebar">
+      <h3>玩家状态</h3>
+      <div id="player-list"></div>
+    </div>
+
+    <div id="log-panel" class="log-panel"></div>
+
+  </div>
+
+</div><!-- /game-screen -->
+
+<script src="/app.js"></script>
+</body>
+</html>
