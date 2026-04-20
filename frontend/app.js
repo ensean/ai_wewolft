@@ -19,8 +19,67 @@ window.addEventListener('DOMContentLoaded', async () => {
   $('player-count').addEventListener('change', renderPlayerRows);
   $('start-btn').addEventListener('click', startGame);
   $('load-bedrock-btn').addEventListener('click', loadBedrockModels);
+  $('toggle-history-btn').addEventListener('click', toggleHistory);
   renderPlayerRows();
 });
+
+// ---- History panel ----
+async function toggleHistory() {
+  const list = $('history-list');
+  const btn  = $('toggle-history-btn');
+  if (list.style.display !== 'none') {
+    list.style.display = 'none';
+    btn.textContent = '展开';
+    return;
+  }
+  list.style.display = 'block';
+  btn.textContent = '收起';
+  list.innerHTML = '<div style="color:#888">加载中…</div>';
+  try {
+    const res = await fetch('/api/games/history');
+    const data = await res.json();
+    const games = data.games || [];
+    if (!games.length) {
+      list.innerHTML = '<div style="color:#666;font-size:0.85rem">还没有已结束的游戏</div>';
+      return;
+    }
+    list.innerHTML = games.map(g => {
+      const winner = g.winner === 'werewolves' ? '🐺 狼人胜' :
+                     g.winner === 'villagers'  ? '👨 好人胜' : '— 未完成';
+      const t = new Date(g.ended_at).toLocaleString('zh-CN', {hour12:false});
+      return `
+        <div class="history-row">
+          <div class="history-main">
+            <div class="history-title">${winner} · ${g.total_rounds}轮 · ${g.player_count}人</div>
+            <div class="history-sub">${g.game_id} · ${t}</div>
+          </div>
+          <button class="btn-sm" onclick="replayGame('${g.game_id}')">▶ 回放</button>
+        </div>`;
+    }).join('');
+  } catch (e) {
+    list.innerHTML = `<div style="color:#ef4444">加载失败：${e.message}</div>`;
+  }
+}
+
+async function replayGame(game_id) {
+  // Switch to game view and replay via SSE
+  hide('setup-screen');
+  show('game-screen');
+  $('log-panel').innerHTML = '';
+  $('player-list').innerHTML = '';
+  players = [];
+  $('phase-info').textContent = `回放 · ${game_id}`;
+
+  if (eventSource) { eventSource.close(); }
+  eventSource = new EventSource(`/api/games/${game_id}/replay?speed=4`);
+  eventSource.onmessage = (e) => {
+    try { handleEvent(JSON.parse(e.data)); } catch {}
+  };
+  eventSource.onerror = () => {
+    appendLog(null, '回放结束', 'system');
+    eventSource.close();
+  };
+}
 
 // ---- Load static (non-Bedrock) models ----
 async function loadModels() {
@@ -155,7 +214,11 @@ async function startGame() {
     const res = await fetch('/api/games', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ player_configs: playerConfigs, aws_region: region }),
+      body: JSON.stringify({
+        player_configs: playerConfigs,
+        aws_region: region,
+        quick_model_id: $('quick-model').value.trim() || null,
+      }),
     });
     if (!res.ok) {
       const err = await res.json();
@@ -214,6 +277,8 @@ function handleEvent(ev) {
     case 'seer_result':   onSeerResult(ev); break;
     case 'witch_action':  onWitchAction(ev); break;
     case 'hunter_shot':   onHunterShot(ev); break;
+    case 'last_words':    onLastWords(ev); break;
+    case 'vote_tally':    onVoteTally(ev); break;
     case 'game_end':      onGameEnd(ev); break;
     case 'error':         onError(ev); break;
   }
@@ -347,8 +412,57 @@ function onHunterShot(ev) {
   renderSidebar();
 }
 
+function onLastWords(ev) {
+  const { player_name, role_label, content, cause } = ev.data;
+  const causeIcon = {
+    wolf_kill: '🌙',
+    voted_out: '🗳️',
+    hunter_shot: '🔫',
+    witch_poison: '☠️',
+  }[cause] || '💀';
+  const entry = document.createElement('div');
+  entry.className = 'log-entry last-words';
+  entry.innerHTML =
+    `<div class="lw-header">${causeIcon} <strong>${esc(player_name)}</strong> 的遗言 <span class="lw-role">[${esc(role_label || '')}]</span></div>` +
+    `<div class="lw-content">“${esc(content)}”</div>`;
+  $('log-panel').appendChild(entry);
+  scrollLog();
+}
+
+// ---- Vote tally: live-updating bar chart ----
+function onVoteTally(ev) {
+  const { items, voted, total, final } = ev.data;
+  // Keep only one "live" tally element per round, update in place
+  let el = document.getElementById('tally-live');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'tally-live';
+    el.className = 'log-entry tally';
+    $('log-panel').appendChild(el);
+  }
+  const maxVotes = Math.max(1, ...items.map(i => i.votes));
+  const bars = items.map(i => {
+    const pct = Math.round(100 * i.votes / maxVotes);
+    return `
+      <div class="tally-row">
+        <div class="tally-name">${esc(i.target_name)}</div>
+        <div class="tally-bar-wrap"><div class="tally-bar" style="width:${pct}%"></div></div>
+        <div class="tally-count">${i.votes}</div>
+      </div>`;
+  }).join('');
+  el.innerHTML =
+    `<div class="tally-header">🗳️ 投票进度 ${voted}/${total}${final ? ' · 最终票型' : ''}</div>` +
+    `<div class="tally-bars">${bars}</div>`;
+  if (final) {
+    // Freeze by removing the live id so next round makes a new one
+    el.id = '';
+    el.classList.add('tally-final');
+  }
+  scrollLog();
+}
+
 function onGameEnd(ev) {
-  const { winner_label, reason, all_roles, total_rounds } = ev.data;
+  const { winner_label, reason, all_roles, total_rounds, usage } = ev.data;
 
   // Reveal all roles in sidebar
   players = all_roles.map(r => ({
@@ -363,12 +477,22 @@ function onGameEnd(ev) {
     `<span class="role-chip ${r.role} ${r.alive ? '' : 'dead'}">${r.name} ${r.role_label}</span>`
   ).join('');
 
+  const usageHtml = usage && usage.input_tokens > 0
+    ? `<div class="usage-stats">
+         📊 Token 用量：输入 ${usage.input_tokens.toLocaleString()} / 输出 ${usage.output_tokens.toLocaleString()}
+         ${usage.cache_read_tokens > 0
+           ? `· 缓存命中 ${usage.cache_read_tokens.toLocaleString()} (${usage.cache_hit_pct}%)`
+           : ''}
+       </div>`
+    : '';
+
   const entry = document.createElement('div');
   entry.className = 'log-entry game-end';
   entry.innerHTML = `
     <div class="winner">🏆 ${esc(winner_label)}获胜！</div>
     <div class="reason">${esc(reason)}</div>
     <div class="roles-grid">${chipsHtml}</div>
+    ${usageHtml}
     <button class="new-game-btn" onclick="resetToSetup()">再来一局</button>
   `;
   $('log-panel').appendChild(entry);

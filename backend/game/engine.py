@@ -8,6 +8,7 @@ from backend.game.state import (
     EventType, GameConfig, GameState, GameStatus, Player, RoleType,
 )
 from backend.game.phases import DayPhase, NightPhase
+from backend.game.persistence import GameRecorder
 
 if TYPE_CHECKING:
     from backend.api.sse import SSEManager
@@ -28,6 +29,20 @@ ROLE_DISTRIBUTION: dict[int, dict[RoleType, int]] = {
 MAX_ROUNDS = 30  # safety cap to prevent infinite loops
 
 
+class _RecordingSSE:
+    """Transparent wrapper: broadcasts to SSE and persists to disk."""
+    def __init__(self, sse, recorder: GameRecorder) -> None:
+        self._sse = sse
+        self._recorder = recorder
+
+    async def broadcast(self, event) -> None:
+        try:
+            await self._recorder.append(event)
+        except Exception as e:
+            logger.warning("recorder.append failed: %s", e)
+        await self._sse.broadcast(event)
+
+
 class GameEngine:
     """
     Orchestrates the full game lifecycle:
@@ -37,15 +52,40 @@ class GameEngine:
 
     def __init__(self, config: GameConfig, sse: "SSEManager") -> None:
         self.config = config
-        self.sse = sse
         self.state = GameState()
+        self.recorder = GameRecorder(self.state.game_id)
+        self.sse = _RecordingSSE(sse, self.recorder)
 
     async def start(self) -> None:
         """Entry point — called once by the API route."""
         from backend.ai.player_agent import AIPlayerAgent
+        from backend.ai.bedrock_client import BedrockClient
+        from backend.ai.openai_client import detect_provider
 
         self.state.status = GameStatus.RUNNING
         n = len(self.config.player_configs)
+
+        # Build one shared lightweight Bedrock client for structured decisions.
+        # Only constructable if the quick model is a Bedrock model; otherwise
+        # each agent falls back to its own main model for structured calls.
+        fast_client = None
+        qm = self.config.quick_model_id
+        if qm and not detect_provider(qm):
+            # Reuse credentials from first Bedrock player (if any), else env
+            first_bedrock = next(
+                (p for p in self.config.player_configs if not detect_provider(p.model_id)),
+                None,
+            )
+            try:
+                fast_client = BedrockClient(
+                    model_id=qm,
+                    region=self.config.aws_region,
+                    aws_access_key_id=first_bedrock.aws_access_key_id if first_bedrock else None,
+                    aws_secret_access_key=first_bedrock.aws_secret_access_key if first_bedrock else None,
+                )
+                logger.info("Fast model for structured decisions: %s", qm)
+            except Exception as e:
+                logger.warning("Failed to init fast Bedrock client (%s): %s", qm, e)
 
         # Build Player objects
         for i, pc in enumerate(self.config.player_configs, start=1):
@@ -58,7 +98,7 @@ class GameEngine:
                 aws_secret_access_key=pc.aws_secret_access_key,
                 api_key=pc.api_key,
             )
-            agent = AIPlayerAgent(player, self.config.aws_region)
+            agent = AIPlayerAgent(player, self.config.aws_region, fast_client=fast_client)
             player.agent = agent
             self.state.players.append(player)
 
@@ -185,6 +225,23 @@ class GameEngine:
             for p in self.state.players
         ]
 
+        # Aggregate token usage stats from all Bedrock clients
+        from backend.ai.bedrock_client import BedrockClient
+        clients_seen = set()
+        total_in = total_out = cache_read = cache_write = 0
+        for p in self.state.players:
+            if not p.agent:
+                continue
+            for c in (p.agent._client, p.agent._fast_client):
+                if isinstance(c, BedrockClient) and id(c) not in clients_seen:
+                    clients_seen.add(id(c))
+                    total_in    += c.total_input_tokens
+                    total_out   += c.total_output_tokens
+                    cache_read  += c.cache_read_tokens
+                    cache_write += c.cache_write_tokens
+
+        cache_savings_pct = int(100 * cache_read / max(1, total_in)) if total_in else 0
+
         ev = self.state.make_event(
             EventType.GAME_END,
             {
@@ -193,6 +250,19 @@ class GameEngine:
                 "reason": reason,
                 "all_roles": all_roles,
                 "total_rounds": self.state.round,
+                "usage": {
+                    "input_tokens":       total_in,
+                    "output_tokens":      total_out,
+                    "cache_read_tokens":  cache_read,
+                    "cache_write_tokens": cache_write,
+                    "cache_hit_pct":      cache_savings_pct,
+                },
             },
         )
         await self.sse.broadcast(ev)
+
+        # Persist metadata snapshot for replay
+        try:
+            await self.recorder.finalize(self.state)
+        except Exception as e:
+            logger.warning("recorder.finalize failed: %s", e)

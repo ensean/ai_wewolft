@@ -39,6 +39,9 @@ class EventType(str, Enum):
     GAME_END = "game_end"
     ERROR = "error"
     SYSTEM = "system"
+    LAST_WORDS = "last_words"
+    VOTE_TALLY = "vote_tally"
+    SHERIFF_ELECTED = "sheriff_elected"   # reserved for future use
 
 
 # ---------------------------------------------------------------------------
@@ -56,6 +59,9 @@ class PlayerConfig(BaseModel):
 class GameConfig(BaseModel):
     player_configs: list[PlayerConfig]
     aws_region: str = "us-east-1"
+    # Cheap Bedrock model used for structured decisions (votes, kill targets, checks).
+    # Speeches still use each player's own model. Set to null to disable tiering.
+    quick_model_id: Optional[str] = "us.amazon.nova-lite-v1:0"
 
 
 # ---------------------------------------------------------------------------

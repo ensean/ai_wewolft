@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from backend.api.bedrock_models import fetch_bedrock_models
 from backend.api.sse import SSEManager
 from backend.game.engine import GameEngine
+from backend.game.persistence import list_games, load_events
 from backend.game.state import GameConfig, GameStatus, RoleType
 from pydantic import BaseModel
 
@@ -131,6 +132,51 @@ def create_router(sse_manager: SSEManager, engine_holder: dict) -> APIRouter:
                 for p in s.players
             ],
         }
+
+    @router.get("/api/games/history")
+    async def get_history():
+        """List metadata of all past games, newest first."""
+        return {"games": list_games()}
+
+    @router.get("/api/games/{game_id}/replay")
+    async def replay_game(game_id: str, request: Request, speed: float = 4.0):
+        """Replay a past game as SSE stream, pacing events with 'speed' multiplier."""
+        events = load_events(game_id)
+        if events is None:
+            raise HTTPException(404, f"Game {game_id} not found")
+
+        # Delay schedule between events (seconds) — proportional to event importance
+        delay_by_type = {
+            "speech":     1.8,
+            "last_words": 2.5,
+            "death":      1.2,
+            "vote_tally": 0.25,
+            "vote":       0.35,
+            "phase_start":1.0,
+            "system":     0.6,
+            "game_start": 0.8,
+            "role_assign":0.8,
+        }
+
+        async def stream():
+            import json as _json
+            for ev in events:
+                if await request.is_disconnected():
+                    return
+                payload = _json.dumps(ev, ensure_ascii=False)
+                yield f"data: {payload}\n\n"
+                base = delay_by_type.get(ev.get("type"), 0.4)
+                await asyncio.sleep(max(0.02, base / max(0.5, speed)))
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
 
     @router.get("/api/games/events")
     async def game_events(request: Request):

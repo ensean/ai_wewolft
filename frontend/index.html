@@ -16,6 +16,14 @@
 <!-- ===== Setup Screen ===== -->
 <div id="setup-screen" class="screen active">
 
+  <div class="card" id="history-card">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <h2 style="margin:0">历史对局</h2>
+      <button class="btn-sm" id="toggle-history-btn">展开</button>
+    </div>
+    <div id="history-list" style="display:none;margin-top:1rem"></div>
+  </div>
+
   <div class="card">
     <h2>游戏配置</h2>
     <div class="form-row">
@@ -46,6 +54,12 @@
       <div class="form-group">
         <label>AWS Secret Key（可选）</label>
         <input type="password" id="aws-secret" placeholder="…">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group" style="flex:1">
+        <label>快速决策模型（Bedrock，用于投票/查验等结构化决策，省 60%+ 成本）</label>
+        <input type="text" id="quick-model" value="us.amazon.nova-lite-v1:0" placeholder="us.amazon.nova-lite-v1:0，留空则使用各玩家主模型">
       </div>
     </div>
   </div>

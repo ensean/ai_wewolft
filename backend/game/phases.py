@@ -35,6 +35,53 @@ class PhaseBase:
     async def _pause(self, seconds: float = ACTION_DELAY) -> None:
         await asyncio.sleep(seconds)
 
+    async def _kill_and_announce(
+        self,
+        player: Player,
+        cause: str,
+        extra: dict | None = None,
+    ) -> None:
+        """Mark a player dead, broadcast DEATH, then their last words."""
+        if not player.is_alive:
+            return
+        player.is_alive = False
+        data = {
+            "player_id": player.id,
+            "player_name": player.name,
+            "cause": cause,
+            "role_revealed": player.role.value,
+            "role_label": player.role_label,
+        }
+        if extra:
+            data.update(extra)
+        await self._broadcast(EventType.DEATH, data)
+        await self._pause(0.5)
+
+        # Last words — skip for witch-poison (classic rule: poisoned can't speak)
+        if cause == "witch_poison":
+            await self._sys_msg(f"💔 {player.name} 被毒死，无法留下遗言。")
+            return
+        await self._last_words(player, cause)
+
+    async def _last_words(self, player: Player, cause: str) -> None:
+        try:
+            words = await player.agent.last_words(self.state, cause)
+        except Exception as e:
+            logger.error("Last words error [%s]: %s", player.name, e)
+            words = ""
+        words = (words or "").strip() or "……"
+        await self._broadcast(
+            EventType.LAST_WORDS,
+            {
+                "player_id": player.id,
+                "player_name": player.name,
+                "role_label": player.role_label,
+                "content": words,
+                "cause": cause,
+            },
+        )
+        await self._pause(0.8)
+
 
 class NightPhase(PhaseBase):
     async def run(self) -> None:
@@ -258,35 +305,15 @@ class DayPhase(PhaseBase):
         if self.state.night_kill_target:
             target = self.state.get_player(self.state.night_kill_target)
             if target and target.is_alive:
-                target.is_alive = False
                 dead.append(target)
-                await self._broadcast(
-                    EventType.DEATH,
-                    {
-                        "player_id": target.id,
-                        "player_name": target.name,
-                        "cause": "wolf_kill",
-                        "role_revealed": target.role.value,
-                    },
-                )
-                await self._pause(0.5)
+                await self._kill_and_announce(target, "wolf_kill")
 
         # Witch poison
         if self.state.witch_poison_target:
             target = self.state.get_player(self.state.witch_poison_target)
             if target and target.is_alive:
-                target.is_alive = False
                 dead.append(target)
-                await self._broadcast(
-                    EventType.DEATH,
-                    {
-                        "player_id": target.id,
-                        "player_name": target.name,
-                        "cause": "witch_poison",
-                        "role_revealed": target.role.value,
-                    },
-                )
-                await self._pause(0.5)
+                await self._kill_and_announce(target, "witch_poison")
 
         if not dead:
             await self._sys_msg("🌤️ 昨晚是平安夜，没有人死亡。")
@@ -319,10 +346,11 @@ class DayPhase(PhaseBase):
 
     async def _vote(self) -> "Player | None":
         alive = self.state.alive_players()
+        total = len(alive)
         await self._sys_msg("🗳️ 开始投票……")
 
         tally: dict[int, int] = {}  # target_id -> votes
-        for player in alive:
+        for idx, player in enumerate(alive, start=1):
             await self._pause(0.3)
             try:
                 target_id = await player.agent.vote(self.state)
@@ -343,6 +371,7 @@ class DayPhase(PhaseBase):
                         "target_name": target.name if target else "？",
                     },
                 )
+                await self._broadcast_tally(tally, voted=idx, total=total)
 
         if not tally:
             await self._sys_msg("🗳️ 没有有效票数，本轮平票无人出局。")
@@ -351,25 +380,37 @@ class DayPhase(PhaseBase):
         max_votes = max(tally.values())
         top = [pid for pid, v in tally.items() if v == max_votes]
 
+        # Final tally (emphasized)
+        await self._broadcast_tally(tally, voted=len(alive), total=len(alive), final=True)
+
         if len(top) > 1:
-            await self._sys_msg(f"🗳️ 平票！{[self.state.get_player(p).name for p in top]} 均获 {max_votes} 票，无人出局。")
+            names = [self.state.get_player(p).name for p in top]
+            await self._sys_msg(f"🗳️ 平票！{'、'.join(names)} 均获 {max_votes} 票，无人出局。")
             return None
 
         exiled_id = top[0]
         exiled = self.state.get_player(exiled_id)
         if exiled:
-            exiled.is_alive = False
-            await self._broadcast(
-                EventType.DEATH,
-                {
-                    "player_id": exiled.id,
-                    "player_name": exiled.name,
-                    "cause": "voted_out",
-                    "role_revealed": exiled.role.value,
-                    "vote_count": max_votes,
-                },
+            await self._kill_and_announce(
+                exiled, "voted_out", {"vote_count": max_votes}
             )
         return exiled
+
+    async def _broadcast_tally(
+        self, tally: dict[int, int], voted: int, total: int, final: bool = False
+    ) -> None:
+        items = []
+        for tid, v in sorted(tally.items(), key=lambda x: -x[1]):
+            p = self.state.get_player(tid)
+            items.append({
+                "target_id": tid,
+                "target_name": p.name if p else "?",
+                "votes": v,
+            })
+        await self._broadcast(
+            EventType.VOTE_TALLY,
+            {"items": items, "voted": voted, "total": total, "final": final},
+        )
 
     async def _trigger_hunter(self, hunter: Player) -> None:
         await self._sys_msg(f"🔫 {hunter.name} 是猎人！猎人请决定是否开枪……")
@@ -382,7 +423,6 @@ class DayPhase(PhaseBase):
         if shot_id is not None:
             target = self.state.get_player(shot_id)
             if target and target.is_alive:
-                target.is_alive = False
                 await self._broadcast(
                     EventType.HUNTER_SHOT,
                     {
@@ -393,5 +433,6 @@ class DayPhase(PhaseBase):
                         "role_revealed": target.role.value,
                     },
                 )
+                await self._kill_and_announce(target, "hunter_shot")
         else:
             await self._sys_msg(f"🔫 {hunter.name} 选择不开枪。")

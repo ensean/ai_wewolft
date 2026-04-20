@@ -72,6 +72,27 @@ input[type="password"] { letter-spacing: 0.1em; }
 #players-table tr:hover td { background: #1e1e38; }
 #players-table input, #players-table select { font-size: 0.85rem; }
 
+/* ---- History list ---- */
+.history-row {
+  display: flex;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #2a2a4a;
+}
+.history-row:last-child { border-bottom: none; }
+.history-main { flex: 1; }
+.history-title {
+  color: #e0e0e0;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.history-sub {
+  color: #666;
+  font-size: 0.75rem;
+  margin-top: 2px;
+  font-family: monospace;
+}
+
 .btn-sm {
   background: #2a2a4a;
   color: #a78bfa;
@@ -220,9 +241,93 @@ input[type="password"] { letter-spacing: 0.1em; }
 .log-entry.vote     { color: #fbbf24; font-size: 0.85rem; }
 .log-entry.private  { background: #1a0a2e; border-left: 3px solid #7c3aed; color: #c084fc; font-size: 0.85rem; }
 .log-entry.hunter   { background: #1a1200; border-left: 3px solid #f59e0b; color: #fde68a; }
+
+/* ---- Last words ---- */
+.log-entry.last-words {
+  background: linear-gradient(135deg, #1a1020, #0f0f1f);
+  border: 1px solid #7c3aed;
+  border-left: 4px solid #c084fc;
+  padding: 0.75rem 1rem;
+  animation: lastWordsIn 0.6s ease;
+}
+.log-entry.last-words .lw-header {
+  color: #c084fc;
+  font-size: 0.82rem;
+  margin-bottom: 0.4rem;
+}
+.log-entry.last-words .lw-role {
+  color: #6b7280;
+  font-weight: normal;
+}
+.log-entry.last-words .lw-content {
+  color: #f3f4f6;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  font-style: italic;
+  white-space: pre-wrap;
+}
+@keyframes lastWordsIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* ---- Vote tally ---- */
+.log-entry.tally {
+  background: #15152a;
+  border-left: 3px solid #fbbf24;
+  padding: 0.6rem 0.75rem;
+}
+.log-entry.tally.tally-final {
+  border-left-color: #ef4444;
+  background: #1f1515;
+}
+.tally-header {
+  color: #fbbf24;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+}
+.tally-final .tally-header { color: #f87171; }
+.tally-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.tally-row {
+  display: grid;
+  grid-template-columns: 80px 1fr 30px;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.85rem;
+}
+.tally-name { color: #d1d5db; }
+.tally-bar-wrap {
+  background: #0a0a15;
+  border-radius: 3px;
+  height: 14px;
+  overflow: hidden;
+}
+.tally-bar {
+  background: linear-gradient(90deg, #fbbf24, #f59e0b);
+  height: 100%;
+  transition: width 0.4s ease;
+}
+.tally-final .tally-bar { background: linear-gradient(90deg, #ef4444, #991b1b); }
+.tally-count {
+  color: #fbbf24;
+  font-weight: 700;
+  text-align: right;
+}
 .log-entry.game-end { background: linear-gradient(135deg, #1a2a1a, #2a1a0a); border: 1px solid #22c55e; padding: 1rem; text-align: center; }
 .log-entry.game-end .winner { font-size: 1.3rem; font-weight: 700; color: #4ade80; }
 .log-entry.game-end .reason { color: #888; margin-top: 0.3rem; }
+.log-entry.game-end .usage-stats {
+  color: #6b7280;
+  font-size: 0.78rem;
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed #2a2a4a;
+}
 
 /* Role reveal table */
 .roles-grid {

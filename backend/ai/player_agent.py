@@ -26,7 +26,12 @@ class AIPlayerAgent:
     All LLM calls are async (Bedrock calls run in thread-pool executor).
     """
 
-    def __init__(self, player: Player, region: str) -> None:
+    def __init__(
+        self,
+        player: Player,
+        region: str,
+        fast_client: Optional[BedrockClient] = None,
+    ) -> None:
         self.player = player
         provider = detect_provider(player.model_id)
         if provider:
@@ -43,6 +48,9 @@ class AIPlayerAgent:
                 aws_access_key_id=player.aws_access_key_id,
                 aws_secret_access_key=player.aws_secret_access_key,
             )
+        # Shared lightweight model for structured decisions (votes, kill targets).
+        # Falls back to the main client if not provided.
+        self._fast_client = fast_client or self._client
         self._system: Optional[str] = None  # set once by engine after roles are known
 
     def set_system_prompt(self, allies: list[Player] | None = None) -> None:
@@ -73,6 +81,41 @@ class AIPlayerAgent:
         )
         return await self._call(prompt)
 
+    async def last_words(self, state: GameState, cause: str) -> str:
+        """Dying player's final speech. Can reveal role, accuse, give advice."""
+        ctx = build_game_context(state, self.player)
+        cause_text = {
+            "wolf_kill":    "你在昨晚被狼人杀害",
+            "witch_poison": "你昨晚被女巫毒死",
+            "voted_out":    "你刚刚被投票放逐",
+            "hunter_shot":  "你被猎人开枪带走",
+        }.get(cause, "你已经出局")
+
+        role_hint = ""
+        if self.player.role == RoleType.SEER and state.seer_checks:
+            lines = []
+            for pid, role in state.seer_checks.items():
+                p = state.get_player(pid)
+                if p:
+                    camp = "狼人" if role == RoleType.WEREWOLF else "好人"
+                    lines.append(f"  {p.name}（{pid}号）是 {camp}")
+            role_hint = (
+                "\n你是预言家，死前可以公开你的全部查验结果帮助好人："
+                + "\n" + "\n".join(lines)
+            )
+        elif self.player.role == RoleType.WEREWOLF:
+            role_hint = "\n你是狼人，死前可以嫁祸好人、制造混乱，或者直接认输。"
+        elif self.player.role == RoleType.WITCH:
+            role_hint = "\n你是女巫，死前可以透露今晚的情况，或者伪装好人继续迷惑狼人。"
+
+        prompt = (
+            f"{ctx}\n\n"
+            f"【遗言时刻】{cause_text}。这是你最后的发言机会。{role_hint}\n"
+            f"请发表一段简短有力的遗言（不超过100字），可以是揭露身份、指控狼人、"
+            f"留下推理线索、或单纯的情绪宣泄。只输出遗言内容本身，不要前缀。"
+        )
+        return await self._call(prompt, max_tokens=300)
+
     async def vote(self, state: GameState) -> int:
         """Day-phase vote. Returns player_id."""
         ctx = build_game_context(state, self.player)
@@ -83,7 +126,7 @@ class AIPlayerAgent:
             f"可选玩家编号：{alive_ids}。"
             f'只输出 JSON，格式为 {{"target_id": 编号}}，不要有任何其他文字。'
         )
-        raw = await self._call(prompt)
+        raw = await self._call_fast(prompt)
         return self._parse_id(raw, alive_ids)
 
     async def werewolf_discuss(self, state: GameState) -> str:
@@ -111,7 +154,7 @@ class AIPlayerAgent:
             f"可选玩家编号：{target_ids}。"
             f'只输出 JSON，格式为 {{"target_id": 编号}}，不要有任何其他文字。'
         )
-        raw = await self._call(prompt)
+        raw = await self._call_fast(prompt)
         return self._parse_id(raw, target_ids)
 
     async def seer_check(self, state: GameState) -> int:
@@ -136,7 +179,7 @@ class AIPlayerAgent:
             f"请选择你最想查验的目标。"
             f'只输出 JSON，格式为 {{"target_id": 编号}}，不要有任何其他文字。'
         )
-        raw = await self._call(prompt)
+        raw = await self._call_fast(prompt)
         return self._parse_id(raw, candidate_ids)
 
     async def witch_decide(self, state: GameState, kill_target: Optional[Player]) -> dict:
@@ -163,7 +206,7 @@ class AIPlayerAgent:
             f'只输出 JSON，格式为 {{"action": "save"/"poison"/"skip", "poison_target": 编号或null}}，'
             f"不要有任何其他文字。"
         )
-        raw = await self._call(prompt)
+        raw = await self._call_fast(prompt)
         return self._parse_witch_action(raw, state, kill_target)
 
     async def hunter_shoot(self, state: GameState) -> Optional[int]:
@@ -179,7 +222,7 @@ class AIPlayerAgent:
             f"可选玩家编号：{target_ids}。"
             f'只输出 JSON，格式为 {{"target_id": 编号}} 或 {{"action": "skip"}}，不要有任何其他文字。'
         )
-        raw = await self._call(prompt)
+        raw = await self._call_fast(prompt)
         return self._parse_hunter_shot(raw, target_ids)
 
     # ------------------------------------------------------------------
@@ -187,15 +230,25 @@ class AIPlayerAgent:
     # ------------------------------------------------------------------
 
     async def _call(self, user_content: str, max_tokens: int = 256) -> str:
+        """Main LLM call (conversational: speak, last words, wolf discuss)."""
+        return await self._do_call(self._client, user_content, max_tokens)
+
+    async def _call_fast(self, user_content: str, max_tokens: int = 64) -> str:
+        """Lightweight LLM call for structured JSON decisions (vote, check, kill)."""
+        return await self._do_call(self._fast_client, user_content, max_tokens, temperature=0.5)
+
+    async def _do_call(
+        self, client, user_content: str, max_tokens: int, temperature: float = 0.85
+    ) -> str:
         messages = [{"role": "user", "content": user_content}]
         try:
-            result = await self._client.converse(
+            result = await client.converse(
                 messages=messages,
                 system=self._system,
                 max_tokens=max_tokens,
-                temperature=0.85,
+                temperature=temperature,
             )
-            return result.strip()
+            return (result or "").strip()
         except Exception as e:
             logger.error("Agent %s LLM call failed: %s", self.player.name, e)
             return ""
