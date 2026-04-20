@@ -64,6 +64,7 @@ class GameEngine:
         from backend.ai.openai_client import detect_provider
 
         self.state.status = GameStatus.RUNNING
+        self.state.sheriff_enabled = self.config.enable_sheriff
         n = len(self.config.player_configs)
 
         # Build one shared lightweight Bedrock client for structured decisions.

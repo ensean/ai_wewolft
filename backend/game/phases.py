@@ -338,8 +338,9 @@ class DayPhase(PhaseBase):
         if self.state.check_win_condition():
             return
 
-        # 3.5. Sheriff election (only round 1, if sheriff not yet set and badge not destroyed)
-        if (self.state.round == 1
+        # 3.5. Sheriff election (only round 1, if enabled and not yet set)
+        if (self.state.sheriff_enabled
+                and self.state.round == 1
                 and self.state.sheriff_id is None
                 and not self.state.sheriff_badge_destroyed):
             await self._run_sheriff_election()

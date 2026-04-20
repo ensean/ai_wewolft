@@ -73,6 +73,8 @@ class GameConfig(BaseModel):
     # Cheap Bedrock model used for structured decisions (votes, kill targets, checks).
     # Speeches still use each player's own model. Set to null to disable tiering.
     quick_model_id: Optional[str] = "us.amazon.nova-lite-v1:0"
+    # Enable sheriff (警长) election on day 1 and 1.5x vote weight. Off by default.
+    enable_sheriff: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +136,7 @@ class GameState:
     hunter_triggered: bool = False              # whether hunter can shoot
 
     # ---- Sheriff (warlord) ----
+    sheriff_enabled: bool = False              # set from GameConfig at start
     sheriff_id: Optional[int] = None           # None = no sheriff (yet or badge destroyed)
     sheriff_badge_destroyed: bool = False      # once destroyed, no sheriff for rest of game
 

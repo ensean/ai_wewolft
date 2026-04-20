@@ -237,6 +237,7 @@ async function startGame() {
         player_configs: playerConfigs,
         aws_region: region,
         quick_model_id: $('quick-model').value.trim() || null,
+        enable_sheriff: $('enable-sheriff').checked,
       }),
     });
     if (!res.ok) {
