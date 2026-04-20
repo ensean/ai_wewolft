@@ -121,6 +121,56 @@ class HumanPlayerAgent:
         )
         return _parse_witch(raw, state, self.player, kill_target)
 
+    async def decide_run_for_sheriff(self, state: GameState) -> bool:
+        raw = await self._request(
+            "run_for_sheriff",
+            {"prompt": "是否参选警长？警长拥有 1.5 票权"},
+            timeout=60,
+        )
+        return raw.strip().lower() in ("yes", "true", "1", "run")
+
+    async def sheriff_campaign_speech(self, state: GameState) -> str:
+        raw = await self._request(
+            "sheriff_campaign",
+            {"prompt": "请发表你的警长竞选宣言，争取其他玩家的选票"},
+        )
+        return raw.strip() or "（弃权）"
+
+    async def vote_for_sheriff(self, state: GameState, candidates: list[Player]) -> int:
+        raw = await self._request(
+            "vote_for_sheriff",
+            {
+                "prompt": "请从候选人中选出你支持的警长",
+                "candidates": [{"id": p.id, "name": p.name} for p in candidates],
+            },
+        )
+        return _parse_int(raw, [p.id for p in candidates])
+
+    async def badge_decision(self, state: GameState) -> dict:
+        alive_others = [p for p in state.alive_players() if p.id != self.player.id]
+        if not alive_others:
+            return {"action": "destroy"}
+        raw = await self._request(
+            "badge_decision",
+            {
+                "prompt": "你是警长，即将出局！请选择移交警徽或销毁",
+                "candidates": [{"id": p.id, "name": p.name} for p in alive_others],
+            },
+            timeout=60,
+        )
+        raw = raw.strip().lower()
+        if raw == "destroy":
+            return {"action": "destroy"}
+        if raw.startswith("pass:"):
+            try:
+                tid = int(raw.split(":")[1])
+                if tid in [p.id for p in alive_others]:
+                    return {"action": "pass", "target_id": tid}
+            except (ValueError, IndexError):
+                pass
+        # fallback: destroy
+        return {"action": "destroy"}
+
     async def hunter_shoot(self, state: GameState) -> Optional[int]:
         alive_others = [p for p in state.alive_players() if p.id != self.player.id]
         if not alive_others:

@@ -95,6 +95,7 @@ def build_game_context(state: GameState, viewer: Player) -> str:
 
     alive_list = "\n".join(
         f"  {p.name}（{p.id}号）"
+        + (" 👮警长" if p.id == state.sheriff_id else "")
         + (" ← 你自己" if p.id == viewer.id else "")
         for p in alive
     )

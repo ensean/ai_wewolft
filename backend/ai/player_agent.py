@@ -212,6 +212,77 @@ class AIPlayerAgent:
         raw = await self._call_fast(prompt)
         return self._parse_witch_action(raw, state, kill_target)
 
+    async def decide_run_for_sheriff(self, state: GameState) -> bool:
+        """Day 1 only: decide whether to run for sheriff."""
+        ctx = build_game_context(state, self.player)
+        hint = ""
+        if self.player.role == RoleType.SEER:
+            hint = "你是预言家，警长身份能让你的查验结果更有话语权，建议上警。"
+        elif self.player.role == RoleType.WEREWOLF:
+            hint = "你是狼人，悍跳警长能搅乱好人阵营，但也容易暴露，慎重考虑。"
+        elif self.player.role == RoleType.WITCH:
+            hint = "你是女巫，上警会增加被狼人锁定的风险，需权衡。"
+        prompt = (
+            f"{ctx}\n\n"
+            f"【警长竞选】现在是第一天白天，你要决定是否参选警长。警长在投票时拥有 1.5 票权。\n"
+            f"{hint}\n"
+            f'只输出 JSON，格式为 {{"run": true}} 或 {{"run": false}}。'
+        )
+        raw = await self._call_fast(prompt)
+        try:
+            obj = json.loads(self._extract_json(raw))
+            return bool(obj.get("run", False))
+        except Exception:
+            return "true" in raw.lower()
+
+    async def sheriff_campaign_speech(self, state: GameState) -> str:
+        """Campaign speech for sheriff election."""
+        ctx = build_game_context(state, self.player)
+        prompt = (
+            f"{ctx}\n\n"
+            f"【警长竞选发言】你已上警。请发表你的竞选宣言，争取其他玩家的选票。"
+            f"可以亮明身份（如预言家），也可以保留身份强调推理能力。"
+            f"提到其他玩家时直呼其姓名。只输出发言内容，不超过120字。"
+        )
+        return await self._call(prompt, max_tokens=400)
+
+    async def vote_for_sheriff(self, state: GameState, candidates: list[Player]) -> int:
+        """Non-candidate votes for a sheriff candidate."""
+        ctx = build_game_context(state, self.player)
+        opts = "、".join(f"{p.name}({p.id})" for p in candidates)
+        prompt = (
+            f"{ctx}\n\n"
+            f"【警长投票】请从候选人中选出你支持的警长。"
+            f"候选人：{opts}。"
+            f'只输出 JSON，格式为 {{"target_id": 编号}}，不要有任何其他文字。'
+        )
+        raw = await self._call_fast(prompt)
+        return self._parse_id(raw, [p.id for p in candidates])
+
+    async def badge_decision(self, state: GameState) -> dict:
+        """Sheriff dies: pass badge to another alive player or destroy it."""
+        ctx = build_game_context(state, self.player)
+        alive_others = [p for p in state.alive_players() if p.id != self.player.id]
+        if not alive_others:
+            return {"action": "destroy"}
+        opts = "、".join(f"{p.name}({p.id})" for p in alive_others)
+        prompt = (
+            f"{ctx}\n\n"
+            f"【警徽移交】你作为警长即将出局。你可以把警徽传给其他玩家，或销毁警徽。"
+            f"可选接任人：{opts}。"
+            f'只输出 JSON，格式为 {{"action": "pass", "target_id": 编号}} 或 {{"action": "destroy"}}。'
+        )
+        raw = await self._call_fast(prompt)
+        try:
+            obj = json.loads(self._extract_json(raw))
+            if obj.get("action") == "pass":
+                tid = int(obj.get("target_id", -1))
+                if tid in [p.id for p in alive_others]:
+                    return {"action": "pass", "target_id": tid}
+        except Exception:
+            pass
+        return {"action": "destroy"}
+
     async def hunter_shoot(self, state: GameState) -> Optional[int]:
         """Hunter decides who to shoot on death. Returns player_id or None."""
         ctx = build_game_context(state, self.player)

@@ -182,6 +182,22 @@ input[type="password"] { letter-spacing: 0.1em; }
   color: #a78bfa;
   flex-shrink: 0;
 }
+.player-card .sheriff-badge {
+  font-size: 0.9rem;
+  filter: drop-shadow(0 0 3px #fbbf24);
+  margin-left: 2px;
+}
+.log-entry.speech.sheriff-campaign {
+  background: #1f1a0a;
+  border-left: 3px solid #fbbf24;
+}
+.log-entry.sheriff-elected {
+  background: linear-gradient(135deg, #1f1a0a, #1a1a2e);
+  border: 1px solid #fbbf24;
+  color: #fbbf24;
+  text-align: center;
+  font-weight: 600;
+}
 .player-model {
   color: #444;
   font-size: 0.68rem;

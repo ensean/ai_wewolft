@@ -44,6 +44,7 @@ class PhaseBase:
         """Mark a player dead, broadcast DEATH, then their last words."""
         if not player.is_alive:
             return
+        was_sheriff = (self.state.sheriff_id == player.id)
         player.is_alive = False
         data = {
             "player_id": player.id,
@@ -51,6 +52,7 @@ class PhaseBase:
             "cause": cause,
             "role_revealed": player.role.value,
             "role_label": player.role_label,
+            "was_sheriff": was_sheriff,
         }
         if extra:
             data.update(extra)
@@ -60,8 +62,59 @@ class PhaseBase:
         # Last words — skip for witch-poison (classic rule: poisoned can't speak)
         if cause == "witch_poison":
             await self._sys_msg(f"💔 {player.name} 被毒死，无法留下遗言。")
+            # Poisoned sheriff also loses badge silently (destroyed)
+            if was_sheriff:
+                self.state.sheriff_id = None
+                self.state.sheriff_badge_destroyed = True
+                await self._broadcast(
+                    EventType.SHERIFF_BADGE_HANDOFF,
+                    {"from_id": player.id, "from_name": player.name,
+                     "action": "destroy", "reason": "poisoned"},
+                )
             return
+
         await self._last_words(player, cause)
+
+        # Sheriff death: handle badge handoff after last words
+        if was_sheriff:
+            await self._handle_sheriff_badge(player)
+
+    async def _handle_sheriff_badge(self, dead_sheriff: Player) -> None:
+        """Sheriff died: let them pass badge to another alive player or destroy it."""
+        await self._sys_msg(f"👮 警长 {dead_sheriff.name} 出局，需决定警徽归属……")
+        try:
+            decision = await dead_sheriff.agent.badge_decision(self.state)
+        except Exception as e:
+            logger.error("badge_decision error: %s", e)
+            decision = {"action": "destroy"}
+
+        if decision.get("action") == "pass":
+            tid = decision.get("target_id")
+            target = self.state.get_player(tid) if tid else None
+            if target and target.is_alive:
+                self.state.sheriff_id = tid
+                await self._broadcast(
+                    EventType.SHERIFF_BADGE_HANDOFF,
+                    {
+                        "from_id": dead_sheriff.id, "from_name": dead_sheriff.name,
+                        "to_id": tid, "to_name": target.name,
+                        "action": "pass",
+                    },
+                )
+                await self._sys_msg(f"👮 警徽移交给 {target.name}！")
+                return
+
+        # Destroy
+        self.state.sheriff_id = None
+        self.state.sheriff_badge_destroyed = True
+        await self._broadcast(
+            EventType.SHERIFF_BADGE_HANDOFF,
+            {
+                "from_id": dead_sheriff.id, "from_name": dead_sheriff.name,
+                "action": "destroy",
+            },
+        )
+        await self._sys_msg(f"💥 {dead_sheriff.name} 选择撕毁警徽，本局不再有警长。")
 
     async def _last_words(self, player: Player, cause: str) -> None:
         try:
@@ -285,6 +338,12 @@ class DayPhase(PhaseBase):
         if self.state.check_win_condition():
             return
 
+        # 3.5. Sheriff election (only round 1, if sheriff not yet set and badge not destroyed)
+        if (self.state.round == 1
+                and self.state.sheriff_id is None
+                and not self.state.sheriff_badge_destroyed):
+            await self._run_sheriff_election()
+
         # 4. Discussion
         await self._discussion()
 
@@ -294,6 +353,120 @@ class DayPhase(PhaseBase):
         # 6. Hunter trigger on exile
         if exiled and exiled.role == RoleType.HUNTER:
             await self._trigger_hunter(exiled)
+
+    # ------------------------------------------------------------------
+    # Sheriff election
+    # ------------------------------------------------------------------
+
+    async def _run_sheriff_election(self) -> None:
+        await self._broadcast(
+            EventType.SHERIFF_CAMPAIGN_START,
+            {"message": "💂 警长竞选开始！各玩家请决定是否上警。"},
+        )
+        await self._pause(0.5)
+
+        alive = self.state.alive_players()
+
+        # 1. Each alive player decides to run
+        candidates: list[Player] = []
+        for p in alive:
+            try:
+                if await p.agent.decide_run_for_sheriff(self.state):
+                    candidates.append(p)
+            except Exception as e:
+                logger.error("decide_run_for_sheriff error [%s]: %s", p.name, e)
+
+        if not candidates:
+            await self._sys_msg("🏳️ 无人参选，本局无警长。")
+            self.state.sheriff_badge_destroyed = True  # no future elections
+            return
+
+        await self._broadcast(
+            EventType.SHERIFF_CANDIDATES,
+            {"candidates": [{"id": p.id, "name": p.name} for p in candidates]},
+        )
+
+        # 2. If only one candidate, auto-elect
+        if len(candidates) == 1:
+            sole = candidates[0]
+            self.state.sheriff_id = sole.id
+            await self._broadcast(
+                EventType.SHERIFF_ELECTED,
+                {"sheriff_id": sole.id, "sheriff_name": sole.name, "uncontested": True},
+            )
+            await self._sys_msg(f"👮 {sole.name} 独自上警，自动当选为警长！")
+            return
+
+        # 3. Candidates give campaign speeches
+        campaign_order = candidates.copy()
+        random.shuffle(campaign_order)
+        await self._sys_msg(
+            f"💂 共 {len(candidates)} 人上警：{'、'.join(p.name for p in candidates)}，依次发言……"
+        )
+        for p in campaign_order:
+            await self._pause(0.4)
+            try:
+                speech = await p.agent.sheriff_campaign_speech(self.state)
+            except Exception as e:
+                logger.error("sheriff_campaign_speech error [%s]: %s", p.name, e)
+                speech = "（沉默）"
+            await self._broadcast(
+                EventType.SHERIFF_CAMPAIGN,
+                {"player_id": p.id, "player_name": p.name, "content": speech},
+            )
+
+        # 4. Non-candidates vote
+        candidate_ids = {p.id for p in candidates}
+        voters = [p for p in alive if p.id not in candidate_ids]
+        if not voters:
+            await self._sys_msg("所有存活玩家都上警了，无投票者，本局无警长。")
+            self.state.sheriff_badge_destroyed = True
+            return
+
+        await self._sys_msg("🗳️ 非候选玩家投票选举警长……")
+        tally: dict[int, int] = {}
+        for voter in voters:
+            await self._pause(0.25)
+            try:
+                tid = await voter.agent.vote_for_sheriff(self.state, candidates)
+            except Exception as e:
+                logger.error("vote_for_sheriff error [%s]: %s", voter.name, e)
+                tid = random.choice([p.id for p in candidates])
+            if tid in candidate_ids:
+                tally[tid] = tally.get(tid, 0) + 1
+                target = self.state.get_player(tid)
+                await self._broadcast(
+                    EventType.SHERIFF_VOTE,
+                    {
+                        "voter_id": voter.id, "voter_name": voter.name,
+                        "target_id": tid, "target_name": target.name if target else "?",
+                    },
+                )
+
+        if not tally:
+            await self._sys_msg("🏳️ 无有效票，本局无警长。")
+            self.state.sheriff_badge_destroyed = True
+            return
+
+        max_votes = max(tally.values())
+        top = [pid for pid, v in tally.items() if v == max_votes]
+        if len(top) > 1:
+            names = [self.state.get_player(p).name for p in top]
+            await self._sys_msg(f"🏳️ 警长投票平票（{'、'.join(names)}），本局无警长。")
+            self.state.sheriff_badge_destroyed = True
+            return
+
+        winner = self.state.get_player(top[0])
+        self.state.sheriff_id = winner.id
+        await self._broadcast(
+            EventType.SHERIFF_ELECTED,
+            {
+                "sheriff_id": winner.id,
+                "sheriff_name": winner.name,
+                "vote_count": max_votes,
+            },
+        )
+        await self._sys_msg(f"👮 {winner.name} 当选警长（{max_votes} 票）！")
 
     # ------------------------------------------------------------------
 
@@ -349,7 +522,7 @@ class DayPhase(PhaseBase):
         total = len(alive)
         await self._sys_msg("🗳️ 开始投票……")
 
-        tally: dict[int, int] = {}  # target_id -> votes
+        tally: dict[int, float] = {}  # target_id -> weighted votes
         for idx, player in enumerate(alive, start=1):
             await self._pause(0.3)
             try:
@@ -360,7 +533,9 @@ class DayPhase(PhaseBase):
                 target_id = random.choice(others) if others else -1
 
             if target_id != -1:
-                tally[target_id] = tally.get(target_id, 0) + 1
+                # Sheriff's vote counts as 1.5
+                weight = 1.5 if player.id == self.state.sheriff_id else 1.0
+                tally[target_id] = tally.get(target_id, 0) + weight
                 target = self.state.get_player(target_id)
                 await self._broadcast(
                     EventType.VOTE,
@@ -369,6 +544,7 @@ class DayPhase(PhaseBase):
                         "voter_name": player.name,
                         "target_id": target_id,
                         "target_name": target.name if target else "？",
+                        "weight": weight,
                     },
                 )
                 await self._broadcast_tally(tally, voted=idx, total=total)

@@ -41,7 +41,14 @@ class EventType(str, Enum):
     SYSTEM = "system"
     LAST_WORDS = "last_words"
     VOTE_TALLY = "vote_tally"
-    SHERIFF_ELECTED = "sheriff_elected"   # reserved for future use
+    # Sheriff mechanic
+    SHERIFF_CAMPAIGN_START = "sheriff_campaign_start"
+    SHERIFF_CANDIDATES = "sheriff_candidates"
+    SHERIFF_CAMPAIGN = "sheriff_campaign"          # candidate speech
+    SHERIFF_VOTE = "sheriff_vote"
+    SHERIFF_ELECTED = "sheriff_elected"
+    SHERIFF_BADGE_HANDOFF = "sheriff_badge_handoff"  # sheriff death: pass or destroy
+    # Human player input
     HUMAN_INPUT_REQUIRED = "human_input_required"
     HUMAN_INPUT_DONE = "human_input_done"
     HUMAN_ROLE_REVEAL = "human_role_reveal"
@@ -125,6 +132,10 @@ class GameState:
     witch_saved_tonight: bool = False            # did witch save the kill target?
     seer_checks: dict[int, RoleType] = field(default_factory=dict)  # player_id -> role
     hunter_triggered: bool = False              # whether hunter can shoot
+
+    # ---- Sheriff (warlord) ----
+    sheriff_id: Optional[int] = None           # None = no sheriff (yet or badge destroyed)
+    sheriff_badge_destroyed: bool = False      # once destroyed, no sheriff for rest of game
 
     def alive_players(self) -> list[Player]:
         return [p for p in self.players if p.is_alive]

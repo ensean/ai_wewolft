@@ -298,6 +298,12 @@ function handleEvent(ev) {
     case 'hunter_shot':   onHunterShot(ev); break;
     case 'last_words':            onLastWords(ev); break;
     case 'vote_tally':            onVoteTally(ev); break;
+    case 'sheriff_campaign_start': onSheriffStart(ev); break;
+    case 'sheriff_candidates':     onSheriffCandidates(ev); break;
+    case 'sheriff_campaign':       onSheriffCampaign(ev); break;
+    case 'sheriff_vote':           onSheriffVote(ev); break;
+    case 'sheriff_elected':        onSheriffElected(ev); break;
+    case 'sheriff_badge_handoff':  onBadgeHandoff(ev); break;
     case 'human_role_reveal':     onHumanRoleReveal(ev); break;
     case 'human_input_required':  onHumanInputRequired(ev); break;
     case 'human_input_done':      onHumanInputDone(ev); break;
@@ -315,6 +321,7 @@ const playerModels = {};  // id -> model_id
 let humanPlayerId = null;
 let humanRole = null;
 let humanTimerInterval = null;
+let sheriffId = null;  // current sheriff player_id
 
 function onGameStart(ev) {
   const { player_count, players: plist } = ev.data;
@@ -466,6 +473,57 @@ function onLastWords(ev) {
   scrollLog();
 }
 
+// ---- Sheriff election events ----
+function onSheriffStart(ev) {
+  appendLog(null, ev.data.message || '💂 警长竞选开始', 'phase');
+}
+
+function onSheriffCandidates(ev) {
+  const names = ev.data.candidates.map(c => c.name).join('、');
+  appendLog(null, `💂 上警名单：${names}`, 'system');
+}
+
+function onSheriffCampaign(ev) {
+  const { player_name, content } = ev.data;
+  const entry = document.createElement('div');
+  entry.className = 'log-entry speech sheriff-campaign';
+  entry.innerHTML =
+    `<span class="speaker">💂 ${esc(player_name)}（竞选）</span>` +
+    `<span class="speech-content">${esc(content)}</span>`;
+  $('log-panel').appendChild(entry);
+  scrollLog();
+}
+
+function onSheriffVote(ev) {
+  const { voter_name, target_name } = ev.data;
+  appendLog(null, `🗳️ ${voter_name} 支持 ${target_name} 当警长`, 'vote');
+}
+
+function onSheriffElected(ev) {
+  const { sheriff_id, sheriff_name, vote_count, uncontested } = ev.data;
+  sheriffId = sheriff_id;
+  const desc = uncontested ? '独自上警自动当选'
+                           : `${vote_count} 票当选`;
+  const entry = document.createElement('div');
+  entry.className = 'log-entry phase sheriff-elected';
+  entry.textContent = `👮 ${sheriff_name} 当选警长！（${desc}）`;
+  $('log-panel').appendChild(entry);
+  scrollLog();
+  renderSidebar();
+}
+
+function onBadgeHandoff(ev) {
+  const { from_name, to_name, action } = ev.data;
+  if (action === 'pass') {
+    sheriffId = ev.data.to_id;
+    appendLog(null, `👮 ${from_name} 将警徽移交给 ${to_name}`, 'phase');
+  } else {
+    sheriffId = null;
+    appendLog(null, `💥 ${from_name} 撕毁警徽，本局不再有警长`, 'phase');
+  }
+  renderSidebar();
+}
+
 // ---- Vote tally: live-updating bar chart ----
 function onVoteTally(ev) {
   const { items, voted, total, final } = ev.data;
@@ -548,6 +606,7 @@ function renderSidebar(showRoles = false) {
   const list = $('player-list');
   list.innerHTML = players.map(p => {
     const modelShort = shortModel(p.model_id || '');
+    const sheriffBadge = p.id === sheriffId ? '<span class="sheriff-badge" title="警长">👮</span>' : '';
     return `
     <div class="player-card ${p.is_alive ? '' : 'dead'} ${p.id === humanPlayerId ? 'human-me' : ''}">
       <div class="dot"></div>
@@ -555,6 +614,7 @@ function renderSidebar(showRoles = false) {
         <div class="player-name-row">
           <span class="pid">${p.id}</span>
           <span class="pname">${esc(p.name)}</span>
+          ${sheriffBadge}
           ${(showRoles || p.role) && p.role_label
             ? `<span class="role-badge">${esc(p.role_label)}</span>`
             : ''}
@@ -591,18 +651,34 @@ function onHumanInputRequired(ev) {
   $('hp-prompt').textContent = prompt || '';
   $('hp-controls').innerHTML = '';
 
-  if (['speak', 'last_words', 'werewolf_discuss'].includes(action_type)) {
+  if (['speak', 'last_words', 'werewolf_discuss', 'sheriff_campaign'].includes(action_type)) {
     // Text input
     const ta = document.createElement('textarea');
     ta.className = 'hp-textarea';
-    ta.placeholder = '输入你的发言…';
+    ta.placeholder = action_type === 'sheriff_campaign'
+      ? '说服大家投你当警长…' : '输入你的发言…';
     ta.rows = 3;
     const btn = document.createElement('button');
     btn.className = 'btn-primary hp-submit';
-    btn.textContent = '提交发言';
+    btn.textContent = '提交';
     btn.onclick = () => submitHumanInput(ta.value.trim() || '（沉默）');
     $('hp-controls').append(ta, btn);
     setTimeout(() => ta.focus(), 100);
+
+  } else if (action_type === 'run_for_sheriff') {
+    $('hp-controls').appendChild(_actionBtn('💂 上警', 'save', () => submitHumanInput('yes')));
+    $('hp-controls').appendChild(_actionBtn('不上警', 'skip', () => submitHumanInput('no')));
+
+  } else if (action_type === 'badge_decision') {
+    if (candidates?.length) {
+      const div = document.createElement('div');
+      div.innerHTML = '<div class="hp-section-label">👮 移交警徽给：</div>';
+      candidates.forEach(c => {
+        div.appendChild(_actionBtn(c.name, 'save', () => submitHumanInput(`pass:${c.id}`)));
+      });
+      $('hp-controls').appendChild(div);
+    }
+    $('hp-controls').appendChild(_actionBtn('💥 撕毁警徽', 'skip', () => submitHumanInput('destroy')));
 
   } else if (action_type === 'witch_decide') {
     // Save button
@@ -750,6 +826,7 @@ function resetToSetup() {
   clearTimer();
   humanPlayerId = null;
   humanRole = null;
+  sheriffId = null;
   $('human-panel').classList.remove('active');
   hide('game-screen');
   show('setup-screen');
