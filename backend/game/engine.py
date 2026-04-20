@@ -259,7 +259,10 @@ class GameEngine:
         for p in self.state.players:
             if not p.agent:
                 continue
-            for c in (p.agent._client, p.agent._fast_client):
+            # HumanPlayerAgent has no LLM clients; skip gracefully
+            main   = getattr(p.agent, "_client", None)
+            fast   = getattr(p.agent, "_fast_client", None)
+            for c in (main, fast):
                 if isinstance(c, BedrockClient) and id(c) not in clients_seen:
                     clients_seen.add(id(c))
                     total_in    += c.total_input_tokens
