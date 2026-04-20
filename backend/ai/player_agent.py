@@ -77,6 +77,7 @@ class AIPlayerAgent:
         prompt = (
             f"{ctx}\n\n"
             f"【你的任务】现在轮到你发言。请结合当前局势，发表你的看法或推理。"
+            f"提到其他玩家时直呼其姓名（如"张三"），不要说"X号玩家"。"
             f"只输出发言内容，不超过80字，不要包含任何格式标记或角色名前缀。"
         )
         return await self._call(prompt)
@@ -112,22 +113,24 @@ class AIPlayerAgent:
             f"{ctx}\n\n"
             f"【遗言时刻】{cause_text}。这是你最后的发言机会。{role_hint}\n"
             f"请发表一段简短有力的遗言（不超过100字），可以是揭露身份、指控狼人、"
-            f"留下推理线索、或单纯的情绪宣泄。只输出遗言内容本身，不要前缀。"
+            f"留下推理线索、或单纯的情绪宣泄。"
+            f"提到其他玩家时直呼其姓名，不要说"X号"。只输出遗言内容本身，不要前缀。"
         )
         return await self._call(prompt, max_tokens=300)
 
     async def vote(self, state: GameState) -> int:
         """Day-phase vote. Returns player_id."""
         ctx = build_game_context(state, self.player)
-        alive_ids = [p.id for p in state.alive_players() if p.id != self.player.id]
+        candidates = [p for p in state.alive_players() if p.id != self.player.id]
+        opts = "、".join(f"{p.name}({p.id})" for p in candidates)
         prompt = (
             f"{ctx}\n\n"
             f"【你的任务】请投票驱逐你认为最可疑的玩家。"
-            f"可选玩家编号：{alive_ids}。"
+            f"可选：{opts}。"
             f'只输出 JSON，格式为 {{"target_id": 编号}}，不要有任何其他文字。'
         )
         raw = await self._call_fast(prompt)
-        return self._parse_id(raw, alive_ids)
+        return self._parse_id(raw, [p.id for p in candidates])
 
     async def werewolf_discuss(self, state: GameState) -> str:
         """Internal wolf discussion (private channel). Returns a short strategy note."""
@@ -147,15 +150,15 @@ class AIPlayerAgent:
         """Werewolf kill vote. Returns player_id."""
         ctx = build_game_context(state, self.player)
         alive_good = state.alive_villager_side()
-        target_ids = [p.id for p in alive_good]
+        opts = "、".join(f"{p.name}({p.id})" for p in alive_good)
         prompt = (
             f"{ctx}\n\n"
             f"【私狼频道】请选择今晚要击杀的目标。"
-            f"可选玩家编号：{target_ids}。"
+            f"可选：{opts}。"
             f'只输出 JSON，格式为 {{"target_id": 编号}}，不要有任何其他文字。'
         )
         raw = await self._call_fast(prompt)
-        return self._parse_id(raw, target_ids)
+        return self._parse_id(raw, [p.id for p in alive_good])
 
     async def seer_check(self, state: GameState) -> int:
         """Seer checks one player. Returns player_id."""
@@ -171,16 +174,16 @@ class AIPlayerAgent:
             candidates = [p for p in state.alive_players() if p.id != self.player.id]
         if not candidates:
             return -1
-        candidate_ids = [p.id for p in candidates]
+        opts = "、".join(f"{p.name}({p.id})" for p in candidates)
         prompt = (
             f"{ctx}\n\n"
             f"【预言家行动】今晚你可以查验一名玩家的阵营。"
-            f"可查验玩家编号：{candidate_ids}。"
+            f"可查验：{opts}。"
             f"请选择你最想查验的目标。"
             f'只输出 JSON，格式为 {{"target_id": 编号}}，不要有任何其他文字。'
         )
         raw = await self._call_fast(prompt)
-        return self._parse_id(raw, candidate_ids)
+        return self._parse_id(raw, [p.id for p in candidates])
 
     async def witch_decide(self, state: GameState, kill_target: Optional[Player]) -> dict:
         """
@@ -215,15 +218,15 @@ class AIPlayerAgent:
         alive_others = [p for p in state.alive_players() if p.id != self.player.id]
         if not alive_others:
             return None
-        target_ids = [p.id for p in alive_others]
+        opts = "、".join(f"{p.name}({p.id})" for p in alive_others)
         prompt = (
             f"{ctx}\n\n"
             f"【猎人技能】你已被淘汰，可以选择带走一名存活玩家，也可以放弃。"
-            f"可选玩家编号：{target_ids}。"
+            f"可选：{opts}。"
             f'只输出 JSON，格式为 {{"target_id": 编号}} 或 {{"action": "skip"}}，不要有任何其他文字。'
         )
         raw = await self._call_fast(prompt)
-        return self._parse_hunter_shot(raw, target_ids)
+        return self._parse_hunter_shot(raw, [p.id for p in alive_others])
 
     # ------------------------------------------------------------------
     # Internal helpers

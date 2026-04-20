@@ -94,12 +94,12 @@ def build_game_context(state: GameState, viewer: Player) -> str:
     dead = [p for p in state.players if not p.is_alive]
 
     alive_list = "\n".join(
-        f"  {p.id}号 {p.name}"
-        + (" 【你自己】" if p.id == viewer.id else "")
+        f"  {p.name}（{p.id}号）"
+        + (" ← 你自己" if p.id == viewer.id else "")
         for p in alive
     )
     dead_list = (
-        "\n".join(f"  {p.id}号 {p.name} [已出局]" for p in dead)
+        "\n".join(f"  {p.name}（{p.id}号）[已出局]" for p in dead)
         if dead
         else "  （暂无）"
     )
