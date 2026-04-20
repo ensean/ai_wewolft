@@ -137,7 +137,13 @@ async def fetch_bedrock_models(
         for e in sorted(family_best.values(), key=lambda e: (e["group"], e["label"]))
     ]
 
-    # ---- 4. Merge + cross-dedup (prefer us.* profile over direct model) -----
+    # ---- 4. Filter to allowed providers ------------------------------------
+    ALLOWED = {"anthropic", "amazon", "deepseek", "moonshot", "moonshot ai",
+               "z.ai", "minimax", "qwen", "meta"}
+    profiles        = [m for m in profiles        if m["group"].lower() in ALLOWED]
+    foundation_models = [m for m in foundation_models if m["group"].lower() in ALLOWED]
+
+    # ---- 5. Merge + cross-dedup (prefer us.* profile over direct model) -----
     # Index profiles by (group, normalised_label)
     profile_labels: dict[tuple, dict] = {
         (e["group"].lower(), _family_key(e["label"])): e
