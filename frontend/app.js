@@ -286,15 +286,25 @@ function handleEvent(ev) {
 
 // ---- Event handlers ----
 
+// model_id lookup: populated by game_start
+const playerModels = {};  // id -> model_id
+
 function onGameStart(ev) {
-  const { player_count } = ev.data;
+  const { player_count, players: plist } = ev.data;
+  (plist || []).forEach(p => { playerModels[p.id] = p.model_id; });
   appendLog(null, `🎮 游戏开始，共 ${player_count} 名玩家`, 'phase');
   $('phase-info').textContent = `游戏开始 · ${player_count}人`;
 }
 
 function onRoleAssign(ev) {
   const { assignments, role_counts } = ev.data;
-  players = assignments.map(a => ({ ...a, is_alive: true, role: null, role_label: null }));
+  players = assignments.map(a => ({
+    ...a,
+    is_alive: true,
+    role: null,
+    role_label: null,
+    model_id: playerModels[a.id] || '',
+  }));
   renderSidebar();
 
   const counts = Object.entries(role_counts)
@@ -467,6 +477,7 @@ function onGameEnd(ev) {
   // Reveal all roles in sidebar
   players = all_roles.map(r => ({
     id: r.id, name: r.name, is_alive: r.alive, role: r.role, role_label: r.role_label,
+    model_id: playerModels[r.id] || '',
   }));
   renderSidebar(true);
 
@@ -508,16 +519,36 @@ function onError(ev) {
 // ---- Sidebar ----
 function renderSidebar(showRoles = false) {
   const list = $('player-list');
-  list.innerHTML = players.map(p => `
+  list.innerHTML = players.map(p => {
+    const modelShort = shortModel(p.model_id || '');
+    return `
     <div class="player-card ${p.is_alive ? '' : 'dead'}">
       <div class="dot"></div>
-      <span class="pid">${p.id}</span>
-      <span>${esc(p.name)}</span>
-      ${(showRoles || p.role) && p.role_label
-        ? `<span class="role-badge">${esc(p.role_label)}</span>`
-        : ''}
-    </div>
-  `).join('');
+      <div class="player-info">
+        <div class="player-name-row">
+          <span class="pid">${p.id}</span>
+          <span class="pname">${esc(p.name)}</span>
+          ${(showRoles || p.role) && p.role_label
+            ? `<span class="role-badge">${esc(p.role_label)}</span>`
+            : ''}
+        </div>
+        ${modelShort ? `<div class="player-model">${esc(modelShort)}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function shortModel(model_id) {
+  if (!model_id) return '';
+  // Strip common prefixes for brevity
+  return model_id
+    .replace(/^(us\.|global\.)/, '')
+    .replace(/^anthropic\./, '')
+    .replace(/^amazon\./, '')
+    .replace(/^meta\./, '')
+    .replace(/-\d{8}-v\d:\d$/, '')  // remove date+version suffix
+    .replace(/-v\d:\d$/, '')
+    .replace(/-v\d$/, '');
 }
 
 // ---- Utils ----

@@ -162,16 +162,34 @@ input[type="password"] { letter-spacing: 0.1em; }
   border-radius: 50%;
   background: #22c55e;
   flex-shrink: 0;
+  margin-top: 3px;
 }
 .player-card.dead .dot { background: #ef4444; }
-.player-card .pid { color: #555; font-size: 0.75rem; min-width: 1.4em; }
+.player-info { flex: 1; min-width: 0; }
+.player-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.player-card .pid { color: #555; font-size: 0.75rem; flex-shrink: 0; }
+.player-card .pname { font-size: 0.88rem; }
 .player-card .role-badge {
   margin-left: auto;
   font-size: 0.7rem;
-  padding: 1px 6px;
+  padding: 1px 5px;
   border-radius: 4px;
   background: #2a2a4a;
   color: #a78bfa;
+  flex-shrink: 0;
+}
+.player-model {
+  color: #444;
+  font-size: 0.68rem;
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: monospace;
 }
 
 /* Log panel */
