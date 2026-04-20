@@ -108,6 +108,67 @@ def list_games() -> list[dict]:
     return games
 
 
+def compute_stats() -> dict:
+    """Aggregate win-rate stats from all finished games' meta.json.
+
+    Returns per-model rows (model_id × role) and an overall summary.
+    """
+    games = list_games()
+    # key: (model_id, role) -> {games, wins, alive_at_end}
+    by_model_role: dict[tuple[str, str], dict] = {}
+    # key: model_id -> aggregate across all roles
+    by_model: dict[str, dict] = {}
+    totals = {"games": len(games), "werewolves_wins": 0, "villagers_wins": 0}
+
+    for g in games:
+        winner = g.get("winner")
+        if winner == "werewolves":
+            totals["werewolves_wins"] += 1
+        elif winner == "villagers":
+            totals["villagers_wins"] += 1
+        for p in g.get("players", []):
+            model_id = p.get("model_id") or ""
+            if not model_id:
+                continue  # skip human players
+            role = p.get("role", "")
+            role_label = p.get("role_label", role)
+            is_wolf = role == "werewolf"
+            won = (is_wolf and winner == "werewolves") or (not is_wolf and winner == "villagers")
+            alive = bool(p.get("alive"))
+
+            mr = by_model_role.setdefault(
+                (model_id, role),
+                {"model_id": model_id, "role": role, "role_label": role_label,
+                 "games": 0, "wins": 0, "survived": 0},
+            )
+            mr["games"] += 1
+            mr["wins"] += int(won)
+            mr["survived"] += int(alive)
+
+            m = by_model.setdefault(
+                model_id,
+                {"model_id": model_id, "games": 0, "wins": 0, "survived": 0,
+                 "wolf_games": 0, "wolf_wins": 0, "good_games": 0, "good_wins": 0},
+            )
+            m["games"] += 1
+            m["wins"] += int(won)
+            m["survived"] += int(alive)
+            if is_wolf:
+                m["wolf_games"] += 1
+                m["wolf_wins"] += int(won)
+            else:
+                m["good_games"] += 1
+                m["good_wins"] += int(won)
+
+    # sort: by games desc, then win_rate desc
+    models = sorted(by_model.values(), key=lambda r: (-r["games"], -r["wins"]))
+    rows = sorted(
+        by_model_role.values(),
+        key=lambda r: (r["model_id"], r["role"]),
+    )
+    return {"totals": totals, "models": models, "by_role": rows}
+
+
 def load_events(game_id: str) -> Optional[list[dict]]:
     """Return all events (as dicts) from a past game, or None if not found."""
     _ensure_dir()

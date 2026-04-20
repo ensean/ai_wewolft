@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from backend.api.bedrock_models import fetch_bedrock_models
 from backend.api.sse import SSEManager
 from backend.game.engine import GameEngine
-from backend.game.persistence import list_games, load_events
+from backend.game.persistence import compute_stats, list_games, load_events
 from backend.game.state import GameConfig, GameStatus, RoleType
 from pydantic import BaseModel
 
@@ -154,6 +154,11 @@ def create_router(sse_manager: SSEManager, engine_holder: dict) -> APIRouter:
     async def get_history():
         """List metadata of all past games, newest first."""
         return {"games": list_games()}
+
+    @router.get("/api/stats")
+    async def get_stats():
+        """Aggregate win-rate stats across all finished games."""
+        return compute_stats()
 
     @router.get("/api/games/{game_id}/replay")
     async def replay_game(game_id: str, request: Request, speed: float = 4.0):

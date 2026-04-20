@@ -20,6 +20,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   $('start-btn').addEventListener('click', startGame);
   $('load-bedrock-btn').addEventListener('click', loadBedrockModels);
   $('toggle-history-btn').addEventListener('click', toggleHistory);
+  $('toggle-stats-btn').addEventListener('click', toggleStats);
   renderPlayerRows();
 });
 
@@ -61,8 +62,61 @@ async function toggleHistory() {
   }
 }
 
+async function toggleStats() {
+  const box = $('stats-content');
+  const btn = $('toggle-stats-btn');
+  if (box.style.display !== 'none') {
+    box.style.display = 'none';
+    btn.textContent = '展开';
+    return;
+  }
+  box.style.display = 'block';
+  btn.textContent = '收起';
+  box.innerHTML = '<div style="color:#888">加载中…</div>';
+  try {
+    const res = await fetch('/api/stats');
+    const s = await res.json();
+    box.innerHTML = renderStatsHtml(s);
+  } catch (e) {
+    box.innerHTML = `<div style="color:#ef4444">加载失败：${e.message}</div>`;
+  }
+}
+
+function renderStatsHtml(s) {
+  const t = s.totals || {games:0, werewolves_wins:0, villagers_wins:0};
+  if (!t.games) return '<div style="color:#666;font-size:0.85rem">还没有已结束的对局</div>';
+  const pct = (a,b) => b ? Math.round(100*a/b) + '%' : '—';
+  const wolfPct = pct(t.werewolves_wins, t.games);
+  const goodPct = pct(t.villagers_wins, t.games);
+
+  const models = (s.models || []).map(m => {
+    const overall = pct(m.wins, m.games);
+    const wolfP = pct(m.wolf_wins, m.wolf_games);
+    const goodP = pct(m.good_wins, m.good_games);
+    return `<tr>
+      <td class="mono">${esc(shortModel(m.model_id))}</td>
+      <td>${m.games}</td>
+      <td class="rate">${overall} <span class="rate-sub">${m.wins}/${m.games}</span></td>
+      <td>${wolfP} <span class="rate-sub">${m.wolf_wins}/${m.wolf_games}</span></td>
+      <td>${goodP} <span class="rate-sub">${m.good_wins}/${m.good_games}</span></td>
+      <td>${pct(m.survived, m.games)}</td>
+    </tr>`;
+  }).join('');
+
+  return `
+    <div class="stats-summary">
+      总对局 <b>${t.games}</b> · 🐺 狼人胜率 <b>${wolfPct}</b> · 👨 好人胜率 <b>${goodPct}</b>
+    </div>
+    <table class="stats-table">
+      <thead><tr>
+        <th>模型</th><th>对局</th><th>综合胜率</th><th>🐺 当狼</th><th>👨 当好人</th><th>存活率</th>
+      </tr></thead>
+      <tbody>${models}</tbody>
+    </table>
+  `;
+}
+
 async function replayGame(game_id) {
-  // Switch to game view and replay via SSE
   hide('setup-screen');
   show('game-screen');
   $('log-panel').innerHTML = '';
@@ -356,13 +410,14 @@ function onPhaseStart(ev) {
   }
   const label = phase === 'night' ? '🌙 夜晚' : '☀️ 白天';
   $('phase-info').textContent = `第 ${ev.round} 轮 · ${label}`;
+  setPhase(phase);
 }
 
 function onSystem(ev) {
   const msg = ev.data.message || '';
   appendLog(null, msg, 'system');
-  if (msg.includes('夜')) $('phase-info').textContent = `第 ${ev.round} 轮 · 🌙 夜晚`;
-  if (msg.includes('天亮')) $('phase-info').textContent = `第 ${ev.round} 轮 · ☀️ 白天`;
+  if (msg.includes('天黑')) { $('phase-info').textContent = `第 ${ev.round} 轮 · 🌙 夜晚`; setPhase('night'); }
+  if (msg.includes('天亮')) { $('phase-info').textContent = `第 ${ev.round} 轮 · ☀️ 白天`; setPhase('day'); }
   // Show thinking placeholders when discussion starts
   if (msg.includes('发言顺序')) {
     // parse names from "发言顺序：A→B→C"
@@ -390,6 +445,7 @@ function onSpeech(ev) {
     `<span class="speech-content">${esc(text)}</span>`;
   $('log-panel').appendChild(entry);
   scrollLog();
+  highlightSpeaker(player_id);
 }
 
 function showThinking(player_id, player_name) {
@@ -602,7 +658,7 @@ function onError(ev) {
   appendLog(null, `❌ 错误：${ev.data.message}`, 'system');
 }
 
-// ---- Sidebar ----
+// ---- Sidebar + seating circle ----
 function renderSidebar(showRoles = false) {
   const list = $('player-list');
   list.innerHTML = players.map(p => {
@@ -624,6 +680,49 @@ function renderSidebar(showRoles = false) {
       </div>
     </div>`;
   }).join('');
+  renderSeating(showRoles);
+}
+
+function renderSeating(showRoles = false) {
+  const el = $('seating-circle');
+  if (!el || !players.length) { if (el) el.innerHTML = ''; return; }
+  const n = players.length;
+  el.style.setProperty('--n', n);
+  el.innerHTML = players.map((p, i) => {
+    const angle = (360 / n) * i - 90; // start at top
+    const cls = [
+      'seat',
+      p.is_alive ? '' : 'dead',
+      p.id === humanPlayerId ? 'me' : '',
+      p.id === sheriffId ? 'sheriff' : '',
+      p.role ? `role-${p.role}` : '',
+    ].filter(Boolean).join(' ');
+    const roleChip = (showRoles || !p.is_alive) && p.role_label
+      ? `<span class="seat-role">${esc(p.role_label)}</span>` : '';
+    const sheriffMark = p.id === sheriffId ? '<span class="seat-sheriff" title="警长">👮</span>' : '';
+    return `
+      <div class="${cls}" style="--a:${angle}deg" data-pid="${p.id}">
+        <div class="seat-avatar">${p.id}${sheriffMark}</div>
+        <div class="seat-name">${esc(p.name)}</div>
+        ${roleChip}
+      </div>`;
+  }).join('');
+}
+
+function highlightSpeaker(player_id) {
+  document.querySelectorAll('#seating-circle .seat').forEach(s => s.classList.remove('speaking'));
+  const el = document.querySelector(`#seating-circle .seat[data-pid="${player_id}"]`);
+  if (el) {
+    el.classList.add('speaking');
+    // auto-remove after a while
+    setTimeout(() => el.classList.remove('speaking'), 3500);
+  }
+}
+
+function setPhase(phase) {
+  document.body.classList.remove('phase-night', 'phase-day');
+  if (phase === 'night') document.body.classList.add('phase-night');
+  else if (phase === 'day') document.body.classList.add('phase-day');
 }
 
 // ===========================================================================
@@ -828,6 +927,7 @@ function resetToSetup() {
   humanPlayerId = null;
   humanRole = null;
   sheriffId = null;
+  setPhase(null);
   $('human-panel').classList.remove('active');
   hide('game-screen');
   show('setup-screen');

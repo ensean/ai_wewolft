@@ -122,6 +122,37 @@ input[type="password"] { letter-spacing: 0.1em; }
 .btn-primary:hover { opacity: 0.9; }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* ---- Stats panel ---- */
+.stats-summary {
+  color: #d1d5db;
+  font-size: 0.88rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px dashed #2a2a4a;
+}
+.stats-summary b { color: #fbbf24; }
+.stats-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.stats-table th {
+  text-align: left;
+  color: #888;
+  font-weight: normal;
+  font-size: 0.78rem;
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid #2a2a4a;
+}
+.stats-table td {
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid #1e1e38;
+}
+.stats-table tr:hover td { background: #1e1e38; }
+.stats-table td.mono { font-family: monospace; font-size: 0.78rem; color: #a78bfa; }
+.stats-table td.rate { color: #fbbf24; font-weight: 600; }
+.stats-table .rate-sub { color: #555; font-size: 0.72rem; font-weight: normal; margin-left: 0.25rem; }
+
 /* ---- Game Screen ---- */
 #game-screen {
   display: none;
@@ -134,6 +165,135 @@ input[type="password"] { letter-spacing: 0.1em; }
   display: flex;
   flex: 1;
   overflow: hidden;
+}
+
+.main-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* ---- Seating circle ---- */
+.seating-circle {
+  --size: 260px;
+  --radius: 108px;
+  position: relative;
+  width: 100%;
+  height: var(--size);
+  flex-shrink: 0;
+  border-bottom: 1px solid #2a2a4a;
+  background: radial-gradient(ellipse at center, #15152a 0%, #0f0f1a 80%);
+  transition: background 0.8s ease;
+  overflow: hidden;
+}
+.seat {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 72px;
+  margin-left: -36px;
+  margin-top: -36px;
+  transform:
+    rotate(var(--a))
+    translateY(calc(-1 * var(--radius)))
+    rotate(calc(-1 * var(--a)));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  transition: opacity 0.4s, filter 0.4s;
+}
+.seat-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #3a3a6a, #2a2a4a);
+  border: 2px solid #4a4a7a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #e0e0e0;
+  font-weight: 700;
+  font-size: 1rem;
+  position: relative;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+}
+.seat-sheriff {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  font-size: 0.9rem;
+  filter: drop-shadow(0 0 3px #fbbf24);
+}
+.seat-name {
+  color: #d1d5db;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.seat-role {
+  font-size: 0.65rem;
+  color: #a78bfa;
+  background: rgba(42,42,74,0.8);
+  padding: 0 5px;
+  border-radius: 8px;
+}
+.seat.me .seat-avatar { border-color: #fbbf24; box-shadow: 0 0 10px rgba(251,191,36,0.5); }
+.seat.dead { opacity: 0.35; filter: grayscale(1); }
+.seat.dead .seat-avatar::after {
+  content: '✕';
+  position: absolute;
+  font-size: 1.4rem;
+  color: #ef4444;
+}
+.seat.speaking .seat-avatar {
+  border-color: #818cf8;
+  box-shadow: 0 0 0 4px rgba(129,140,248,0.3), 0 0 18px rgba(129,140,248,0.6);
+  animation: seatPulse 1s ease-in-out infinite;
+}
+@keyframes seatPulse {
+  0%,100% { transform: scale(1); }
+  50%     { transform: scale(1.08); }
+}
+/* Role-colored avatar rim once revealed */
+.seat.role-werewolf .seat-avatar { background: linear-gradient(135deg, #5a1a1a, #2a0a0a); border-color: #ef4444; }
+.seat.role-villager .seat-avatar { background: linear-gradient(135deg, #1a3a1a, #0a2a0a); border-color: #22c55e; }
+.seat.role-seer     .seat-avatar { background: linear-gradient(135deg, #1a2a5a, #0a1a3a); border-color: #60a5fa; }
+.seat.role-witch    .seat-avatar { background: linear-gradient(135deg, #3a1a5a, #1a0a3a); border-color: #c084fc; }
+.seat.role-hunter   .seat-avatar { background: linear-gradient(135deg, #4a2a00, #2a1a00); border-color: #f59e0b; }
+
+/* ---- Day / Night theming (body-level) ---- */
+body.phase-night { background: #050510; }
+body.phase-night .seating-circle {
+  background: radial-gradient(ellipse at center, #0f1030 0%, #050510 80%);
+  box-shadow: inset 0 0 60px rgba(80, 80, 200, 0.08);
+}
+body.phase-night .seating-circle::before {
+  content: '🌙';
+  position: absolute;
+  top: 8px; right: 16px;
+  font-size: 1.6rem;
+  opacity: 0.5;
+  filter: drop-shadow(0 0 8px #93c5fd);
+}
+body.phase-night .seat:not(.dead):not(.me) { opacity: 0.55; }
+
+body.phase-day { background: #10101c; }
+body.phase-day .seating-circle {
+  background: radial-gradient(ellipse at center, #2a2030 0%, #10101c 80%);
+  box-shadow: inset 0 0 60px rgba(251, 191, 36, 0.08);
+}
+body.phase-day .seating-circle::before {
+  content: '☀️';
+  position: absolute;
+  top: 8px; right: 16px;
+  font-size: 1.6rem;
+  opacity: 0.6;
+  filter: drop-shadow(0 0 10px #fbbf24);
 }
 
 /* Sidebar */
