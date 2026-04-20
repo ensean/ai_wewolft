@@ -73,6 +73,7 @@
           <th style="width:110px">玩家名</th>
           <th>模型</th>
           <th style="width:200px">API Key（非 Bedrock 填写）</th>
+          <th style="width:52px;text-align:center">真人</th>
         </tr>
       </thead>
       <tbody id="players-tbody"></tbody>
@@ -101,6 +102,17 @@
 
     <div id="log-panel" class="log-panel"></div>
 
+  </div>
+
+  <!-- Human player action panel (hidden until needed) -->
+  <div id="human-panel" class="human-panel">
+    <div class="hp-header">
+      <span id="hp-role-badge" class="hp-role">🎭 你的身份：—</span>
+      <span id="hp-private-info" class="hp-private"></span>
+      <span id="hp-timer" class="hp-timer"></span>
+    </div>
+    <div id="hp-prompt" class="hp-prompt"></div>
+    <div id="hp-controls" class="hp-controls"></div>
   </div>
 
 </div><!-- /game-screen -->

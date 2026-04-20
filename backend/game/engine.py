@@ -55,6 +55,7 @@ class GameEngine:
         self.state = GameState()
         self.recorder = GameRecorder(self.state.game_id)
         self.sse = _RecordingSSE(sse, self.recorder)
+        self.pending_inputs: dict = {}  # player_id(str) -> asyncio.Future
 
     async def start(self) -> None:
         """Entry point — called once by the API route."""
@@ -87,6 +88,8 @@ class GameEngine:
             except Exception as e:
                 logger.warning("Failed to init fast Bedrock client (%s): %s", qm, e)
 
+        from backend.ai.human_agent import HumanPlayerAgent
+
         # Build Player objects
         for i, pc in enumerate(self.config.player_configs, start=1):
             player = Player(
@@ -94,11 +97,15 @@ class GameEngine:
                 name=pc.name,
                 role=RoleType.VILLAGER,  # placeholder; assigned below
                 model_id=pc.model_id,
+                is_human=pc.is_human,
                 aws_access_key_id=pc.aws_access_key_id,
                 aws_secret_access_key=pc.aws_secret_access_key,
                 api_key=pc.api_key,
             )
-            agent = AIPlayerAgent(player, self.config.aws_region, fast_client=fast_client)
+            if pc.is_human:
+                agent = HumanPlayerAgent(player, self.state, self.sse, self.pending_inputs)
+            else:
+                agent = AIPlayerAgent(player, self.config.aws_region, fast_client=fast_client)
             player.agent = agent
             self.state.players.append(player)
 
@@ -187,6 +194,25 @@ class GameEngine:
         for player in self.state.players:
             allies = wolves if player.role == RoleType.WEREWOLF else []
             player.agent.set_system_prompt(allies)
+
+        # Reveal role to human player via private event
+        for player in self.state.players:
+            if player.is_human:
+                ally_list = [
+                    {"id": p.id, "name": p.name}
+                    for p in wolves if p.id != player.id
+                ]
+                ev = self.state.make_event(
+                    EventType.HUMAN_ROLE_REVEAL,
+                    {
+                        "player_id":  player.id,
+                        "role":       player.role.value,
+                        "role_label": player.role_label,
+                        "wolf_allies": ally_list,
+                    },
+                    public=False,
+                )
+                await self.sse.broadcast(ev)
 
     async def _run_round(self) -> "str | None":
         """Run one full round. Returns winner string or None."""

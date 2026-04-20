@@ -41,6 +41,11 @@ class BedrockModelRequest(BaseModel):
     aws_secret_access_key: str | None = None
 
 
+class HumanInputBody(BaseModel):
+    player_id: int
+    value: str  # free text, player_id as string, or "save"/"poison:N"/"skip"
+
+
 def create_router(sse_manager: SSEManager, engine_holder: dict) -> APIRouter:
     router = APIRouter()
 
@@ -132,6 +137,18 @@ def create_router(sse_manager: SSEManager, engine_holder: dict) -> APIRouter:
                 for p in s.players
             ],
         }
+
+    @router.post("/api/games/input")
+    async def submit_human_input(body: HumanInputBody):
+        """Resolve a pending human player action."""
+        engine: GameEngine | None = engine_holder.get("engine")
+        if not engine:
+            raise HTTPException(404, "没有正在进行的游戏")
+        future = engine.pending_inputs.get(str(body.player_id))
+        if future and not future.done():
+            future.set_result(body.value)
+            return {"ok": True}
+        return {"ok": False, "reason": "no pending input for this player"}
 
     @router.get("/api/games/history")
     async def get_history():

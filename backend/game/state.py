@@ -42,6 +42,9 @@ class EventType(str, Enum):
     LAST_WORDS = "last_words"
     VOTE_TALLY = "vote_tally"
     SHERIFF_ELECTED = "sheriff_elected"   # reserved for future use
+    HUMAN_INPUT_REQUIRED = "human_input_required"
+    HUMAN_INPUT_DONE = "human_input_done"
+    HUMAN_ROLE_REVEAL = "human_role_reveal"
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +53,8 @@ class EventType(str, Enum):
 
 class PlayerConfig(BaseModel):
     name: str
-    model_id: str
+    model_id: str = ""
+    is_human: bool = False
     aws_access_key_id: Optional[str] = None
     aws_secret_access_key: Optional[str] = None
     api_key: Optional[str] = None          # for OpenAI-compatible providers (Kimi/DeepSeek/MiniMax/GLM)
@@ -75,6 +79,7 @@ class Player:
     role: RoleType
     model_id: str
     is_alive: bool = True
+    is_human: bool = False
     aws_access_key_id: Optional[str] = None
     aws_secret_access_key: Optional[str] = None
     api_key: Optional[str] = None          # for OpenAI-compatible providers

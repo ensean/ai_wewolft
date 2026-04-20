@@ -180,9 +180,25 @@ function renderPlayerRows() {
           </select>
         </td>
         <td><input type="password" class="p-apikey" placeholder="sk-…（Kimi/DeepSeek/MiniMax/GLM）"></td>
+        <td style="text-align:center">
+          <input type="radio" name="human-player" class="p-human" value="${i}">
+        </td>
       </tr>`;
   }
   tbody.innerHTML = html;
+
+  // Toggle model/key inputs when human radio changes
+  tbody.querySelectorAll('.p-human').forEach(radio => {
+    radio.addEventListener('change', () => {
+      tbody.querySelectorAll('tr').forEach(tr => {
+        const isHuman = tr.querySelector('.p-human')?.checked;
+        tr.querySelectorAll('.p-model, .p-apikey').forEach(el => {
+          el.disabled = isHuman;
+          el.style.opacity = isHuman ? '0.3' : '1';
+        });
+      });
+    });
+  });
 }
 
 // ---- Start game ----
@@ -195,18 +211,21 @@ async function startGame() {
   const accessKey = $('aws-key').value.trim() || null;
   const secretKey = $('aws-secret').value.trim() || null;
 
-  const nameInputs  = document.querySelectorAll('.p-name');
-  const modelInputs = document.querySelectorAll('.p-model');
+  const nameInputs   = document.querySelectorAll('.p-name');
+  const modelInputs  = document.querySelectorAll('.p-model');
   const apikeyInputs = document.querySelectorAll('.p-apikey');
+  const humanInputs  = document.querySelectorAll('.p-human');
 
   const playerConfigs = [];
   for (let i = 0; i < nameInputs.length; i++) {
+    const isHuman = humanInputs[i]?.checked || false;
     playerConfigs.push({
       name: nameInputs[i].value.trim() || `玩家${i+1}`,
-      model_id: modelInputs[i].value,
-      aws_access_key_id: accessKey,
-      aws_secret_access_key: secretKey,
-      api_key: apikeyInputs[i]?.value.trim() || null,
+      model_id: isHuman ? '' : modelInputs[i].value,
+      is_human: isHuman,
+      aws_access_key_id: isHuman ? null : accessKey,
+      aws_secret_access_key: isHuman ? null : secretKey,
+      api_key: isHuman ? null : (apikeyInputs[i]?.value.trim() || null),
     });
   }
 
@@ -277,9 +296,12 @@ function handleEvent(ev) {
     case 'seer_result':   onSeerResult(ev); break;
     case 'witch_action':  onWitchAction(ev); break;
     case 'hunter_shot':   onHunterShot(ev); break;
-    case 'last_words':    onLastWords(ev); break;
-    case 'vote_tally':    onVoteTally(ev); break;
-    case 'game_end':      onGameEnd(ev); break;
+    case 'last_words':            onLastWords(ev); break;
+    case 'vote_tally':            onVoteTally(ev); break;
+    case 'human_role_reveal':     onHumanRoleReveal(ev); break;
+    case 'human_input_required':  onHumanInputRequired(ev); break;
+    case 'human_input_done':      onHumanInputDone(ev); break;
+    case 'game_end':              onGameEnd(ev); break;
     case 'error':         onError(ev); break;
   }
 }
@@ -288,6 +310,11 @@ function handleEvent(ev) {
 
 // model_id lookup: populated by game_start
 const playerModels = {};  // id -> model_id
+
+// Human player state
+let humanPlayerId = null;
+let humanRole = null;
+let humanTimerInterval = null;
 
 function onGameStart(ev) {
   const { player_count, players: plist } = ev.data;
@@ -522,7 +549,7 @@ function renderSidebar(showRoles = false) {
   list.innerHTML = players.map(p => {
     const modelShort = shortModel(p.model_id || '');
     return `
-    <div class="player-card ${p.is_alive ? '' : 'dead'}">
+    <div class="player-card ${p.is_alive ? '' : 'dead'} ${p.id === humanPlayerId ? 'human-me' : ''}">
       <div class="dot"></div>
       <div class="player-info">
         <div class="player-name-row">
@@ -536,6 +563,144 @@ function renderSidebar(showRoles = false) {
       </div>
     </div>`;
   }).join('');
+}
+
+// ===========================================================================
+// Human player handlers
+// ===========================================================================
+
+function onHumanRoleReveal(ev) {
+  const { player_id, role, role_label, wolf_allies } = ev.data;
+  humanPlayerId = player_id;
+  humanRole = role;
+  // Show role badge persistently
+  const roleClass = { werewolf:'🐺', villager:'👨', seer:'🔮', witch:'🧪', hunter:'🔫' }[role] || '🎭';
+  $('hp-role-badge').textContent = `${roleClass} 你的身份：${role_label}`;
+  $('hp-role-badge').className = `hp-role hp-role-${role}`;
+  if (wolf_allies && wolf_allies.length) {
+    $('hp-private-info').textContent = `狼队友：${wolf_allies.map(a => a.name).join('、')}`;
+  }
+  $('human-panel').classList.add('active');
+}
+
+function onHumanInputRequired(ev) {
+  if (ev.data.player_id !== humanPlayerId) return;
+  const { action_type, prompt, candidates, kill_target,
+          save_available, poison_available, timeout } = ev.data;
+
+  $('hp-prompt').textContent = prompt || '';
+  $('hp-controls').innerHTML = '';
+
+  if (['speak', 'last_words', 'werewolf_discuss'].includes(action_type)) {
+    // Text input
+    const ta = document.createElement('textarea');
+    ta.className = 'hp-textarea';
+    ta.placeholder = '输入你的发言…';
+    ta.rows = 3;
+    const btn = document.createElement('button');
+    btn.className = 'btn-primary hp-submit';
+    btn.textContent = '提交发言';
+    btn.onclick = () => submitHumanInput(ta.value.trim() || '（沉默）');
+    $('hp-controls').append(ta, btn);
+    setTimeout(() => ta.focus(), 100);
+
+  } else if (action_type === 'witch_decide') {
+    // Save button
+    if (save_available && kill_target) {
+      const btn = _actionBtn(`💊 救 ${kill_target.name}`, 'save', () => submitHumanInput('save'));
+      $('hp-controls').appendChild(btn);
+    }
+    // Poison buttons
+    if (poison_available && candidates?.length) {
+      const div = document.createElement('div');
+      div.innerHTML = '<div class="hp-section-label">☠️ 毒死：</div>';
+      candidates.forEach(c => {
+        div.appendChild(_actionBtn(c.name, 'poison', () => submitHumanInput(`poison:${c.id}`)));
+      });
+      $('hp-controls').appendChild(div);
+    }
+    // Skip
+    $('hp-controls').appendChild(_actionBtn('跳过', 'skip', () => submitHumanInput('skip')));
+
+  } else if (action_type === 'hunter_shoot') {
+    if (candidates?.length) {
+      candidates.forEach(c => {
+        $('hp-controls').appendChild(_actionBtn(`🔫 ${c.name}`, 'shoot', () => submitHumanInput(String(c.id))));
+      });
+    }
+    $('hp-controls').appendChild(_actionBtn('不开枪', 'skip', () => submitHumanInput('skip')));
+
+  } else if (candidates?.length) {
+    // Generic player-choice (vote, seer_check, werewolf_vote_kill)
+    candidates.forEach(c => {
+      $('hp-controls').appendChild(_actionBtn(c.name, 'pick', () => submitHumanInput(String(c.id))));
+    });
+  }
+
+  startTimer(timeout || 180);
+}
+
+function onHumanInputDone(ev) {
+  if (ev.data.player_id !== humanPlayerId) return;
+  $('hp-controls').innerHTML = '<div style="color:#22c55e;padding:0.5rem">✓ 已提交</div>';
+  $('hp-prompt').textContent = '';
+  clearTimer();
+}
+
+function _actionBtn(label, cls, onclick) {
+  const btn = document.createElement('button');
+  btn.className = `hp-action-btn hp-action-${cls}`;
+  btn.textContent = label;
+  btn.onclick = onclick;
+  return btn;
+}
+
+async function submitHumanInput(value) {
+  if (!humanPlayerId) return;
+  // Disable all controls immediately to prevent double-submit
+  $('hp-controls').querySelectorAll('button,textarea').forEach(el => el.disabled = true);
+  try {
+    await fetch('/api/games/input', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ player_id: humanPlayerId, value }),
+    });
+  } catch (e) {
+    console.error('submitHumanInput failed:', e);
+  }
+}
+
+// Also update seer result in private info area
+const _origSeerResult = onSeerResult;
+// eslint-disable-next-line no-global-assign
+function onSeerResult(ev) {
+  _origSeerResult(ev);
+  // If human is the seer, update private info area
+  if (ev.data.seer_id === humanPlayerId) {
+    const cur = $('hp-private-info').textContent;
+    const add = `查验：${ev.data.target_name}=${ev.data.result}`;
+    $('hp-private-info').textContent = cur ? `${cur} · ${add}` : add;
+  }
+}
+
+// ---- Timer ----
+function startTimer(seconds) {
+  clearTimer();
+  let remaining = seconds;
+  const el = $('hp-timer');
+  const update = () => {
+    const m = Math.floor(remaining / 60);
+    const s = remaining % 60;
+    el.textContent = `⏱ ${m}:${s.toString().padStart(2,'0')}`;
+    el.style.color = remaining <= 30 ? '#ef4444' : '#888';
+    if (remaining-- <= 0) clearTimer();
+  };
+  update();
+  humanTimerInterval = setInterval(update, 1000);
+}
+function clearTimer() {
+  if (humanTimerInterval) { clearInterval(humanTimerInterval); humanTimerInterval = null; }
+  if ($('hp-timer')) $('hp-timer').textContent = '';
 }
 
 function shortModel(model_id) {
@@ -582,6 +747,10 @@ function roleLabel(role) {
 
 function resetToSetup() {
   if (eventSource) { eventSource.close(); eventSource = null; }
+  clearTimer();
+  humanPlayerId = null;
+  humanRole = null;
+  $('human-panel').classList.remove('active');
   hide('game-screen');
   show('setup-screen');
   const btn = $('start-btn');
